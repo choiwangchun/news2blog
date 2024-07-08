@@ -1,0 +1,8 @@
+schedule
+selenium
+langchain
+openai
+slack_sdk
+python-dotenv
+langchain_community
+beautifulsoup4
