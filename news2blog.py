@@ -12,7 +12,7 @@ from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from langchain import LLMChain, PromptTemplate
+from langchain_community.llms import OpenAI
 from langchain.llms import OpenAI
 from dotenv import load_dotenv
 import os
@@ -42,12 +42,17 @@ class NewsBot:
 
         
     async def send_discord_notification(self, message):
-        await self.discord_bot.wait_until_ready()
-        channel = self.discord_bot.get_channel(self.discord_channel_id)
-        if channel:
-            await channel.send(message)
-        else:
-            print(f"Error: Could not find Discord channel with ID {self.discord_channel_id}")   
+        bot = self.create_discord_bot()
+        try:
+            await bot.login(self.discord_token)
+            await bot.connect()
+            channel = bot.get_channel(self.discord_channel_id)
+            if channel:
+                await channel.send(message)
+            else:
+                print(f"Error: Could not find Discord channel with ID {self.discord_channel_id}")
+        finally:
+            await bot.close()   
 
     def setup_selenium(self):
         options = webdriver.ChromeOptions()
@@ -70,7 +75,7 @@ class NewsBot:
             articles = self.driver.find_elements(By.CSS_SELECTOR, "a[data-test='article-title-link']")
             print(f"Found {len(articles)} articles")
             
-            for article in articles[:20]:  # 최근 20개 기사만 수집
+            for article in articles[:10]:  # 최근 20개 기사만 수집
                 title = article.text
                 link = article.get_attribute("href")
                 raw_data.append({"title": title, "link": link})
@@ -174,14 +179,29 @@ class NewsBot:
 
     async def run_cycle(self, time_period):
         try:
+            # 뉴스 크롤링
+            self.setup_selenium()
+            raw_data = self.crawl_investing_com(time_period)
+            
+            # 뉴스 파싱
+            parsed_data = self.parse_news_data(raw_data)
+            
+            # 파싱된 데이터를 CSV로 저장
+            self.save_to_csv(parsed_data)
+            
+            # 최신 CSV 파일에서 데이터 읽기
             df = self.read_latest_csv()
+            
+            # 데이터 프레임을 문자열로 변환
             input_data = "\n\n".join([f"제목: {row['title']}\n내용: {row['content']}" for _, row in df.iterrows()])
             
+            # AI 워크플로우 실행
             result = run_workflow(self.ai_workflow, input_data)
             
-            self.save_agent_results(result)
-            
             print(f"Workflow result: {result}")  # 디버깅을 위한 출력 추가
+            
+            # 각 Agent의 결과를 CSV로 저장
+            self.save_agent_results(result)
             
             if 'blog_writer' in result and 'seo_evaluator' in result:
                 blog_post = result['blog_writer']['output']
@@ -190,11 +210,13 @@ class NewsBot:
                 print(f"SEO result: {seo_result}")  # 디버깅을 위한 출력 추가
                 
                 try:
-                    seo_score = int(seo_result.split()[0])
+                    score_line = [line for line in seo_result.split('\n') if line.startswith("SEO 점수:")][0]
+                    seo_score = int(score_line.split(":")[1].strip())
                 except (ValueError, IndexError):
                     print(f"Failed to parse SEO score from: {seo_result}")
                     seo_score = 0
                 
+                # 블로그 포스팅 및 결과 저장 로직
                 self.post_to_blog(blog_post)
                 self.save_result(blog_post, seo_score)
                 await self.send_discord_notification(f"새 블로그 포스트가 작성되었습니다. SEO 점수: {seo_score}")
@@ -205,8 +227,12 @@ class NewsBot:
         except Exception as e:
             print(f"Error in run_cycle: {e}")
             import traceback
-            traceback.print_exc()  # 상세한 에러 정보 출력
+            traceback.print_exc()
             await self.send_discord_notification(f"Error occurred: {e}")
+        finally:
+            # Selenium 드라이버 종료
+            if self.driver:
+                self.driver.quit()
 
 
     def save_agent_results(self, result):
@@ -232,31 +258,25 @@ class NewsBot:
     
 
 async def main():
-    import logging
-    logging.basicConfig(level=logging.INFO)
-
     bot = NewsBot()
-    
-    @bot.discord_bot.event
-    async def on_ready():
-        print(f'{bot.discord_bot.user} has connected to Discord!')
     
     async def run_schedule():
         while True:
             now = datetime.now()
-            if now.hour == 9 and now.minute == 0:
+            if now.hour == 0 and now.minute == 36:
                 await bot.run_cycle("night_to_morning")
             elif now.hour == 13 and now.minute == 0:
                 await bot.run_cycle("morning_to_noon")
-            elif now.hour == 23 and now.minute == 8:
+            elif now.hour == 22 and now.minute == 34:
                 await bot.run_cycle("noon_to_evening")
             await asyncio.sleep(60)  # 1분마다 체크
-    
-    # 두 개의 태스크를 동시에 실행
-    await asyncio.gather(
-        bot.discord_bot.start(bot.discord_token),
-        run_schedule()
-    )
+
+    try:
+        await run_schedule()
+    except Exception as e:
+        print(f"An error occurred: {e}")
+        import traceback
+        traceback.print_exc()
 
 if __name__ == "__main__":
     asyncio.run(main())

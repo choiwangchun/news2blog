@@ -6,3 +6,8 @@ slack_sdk
 python-dotenv
 langchain_community
 beautifulsoup4
+google-generativeai
+pandas
+discord.py
+langchain-google-genai
+PyNaCl
