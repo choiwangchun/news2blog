@@ -1,108 +1,138 @@
 from langchain.prompts import ChatPromptTemplate
+from langchain_core.output_parsers import StrOutputParser
 from langgraph.graph import StateGraph, END
-from typing import TypedDict, Annotated, Any
-from operator import itemgetter
+from typing import TypedDict
 from langchain_google_genai import ChatGoogleGenerativeAI
+import re
+from dotenv import load_dotenv
 
-class AgentState(TypedDict):
+load_dotenv()
+
+class AgentState(TypedDict, total=False):
     input: str
-    output: Any
+    pick_subject: str
+    strategist: str
+    blog_output: str
+    seo_content: str
+    SEO_score: int
+    seo_evaluation: str
 
-def create_workflow(api_key):
+def create_workflow(api_key, reporter='By Investing', today_date=None):
+    if today_date is None:
+        from datetime import datetime
+        today_date = datetime.now().strftime("%Y-%m-%d")
+
     llm = ChatGoogleGenerativeAI(model='gemini-1.5-pro', temperature=0.8, google_api_key=api_key)
-
     workflow = StateGraph(AgentState)
 
-    # TrendAnalystAgent 정의
-    def trend_analyst_agent(state):
+    def trend_analyst_agent(state: AgentState) -> AgentState:
         prompt = ChatPromptTemplate.from_template(
-            "다음 뉴스 데이터를 분석하고, 현재 가장 트렌디하고 인기 있는 주제 5개를 선정해주세요:\n{input}\n\n트렌디한 주제 5개:"
+            "다음 뉴스 데이터를 분석하고, 현재 가장 트렌디하고 인기 있는 주제 3개를 선정해주세요:\n{input}\n\n트렌디한 주제 3개:"
         )
-        chain = prompt | llm
-        output = chain.invoke({"input": state["input"]}).content
-        return {"input": state["input"], "output": output}
+        chain = prompt | llm | StrOutputParser()
+        pick_subject = chain.invoke({"input": state["input"]})
+        return AgentState(input=state["input"], pick_subject=pick_subject)
 
-    # ContentStrategistAgent 정의
-    def content_strategist_agent(state):
+    def content_strategist_agent(state: AgentState) -> AgentState:
         prompt = ChatPromptTemplate.from_template(
-            "다음 트렌디한 주제들을 바탕으로, E-E-A-T(경험, 전문성, 권위성, 신뢰성) 기준을 고려하여 각 주제를 요약해주세요. "
-            "독자의 관심을 끌 수 있는 독창적인 내용으로 구성하세요:\n{input}\n\n전략적 요약:"
+            "다음 3개의 트렌디한 주제들을 바탕으로, E-E-A-T(경험, 전문성, 권위성, 신뢰성) 기준을 고려하여 각 주제를 요약해주세요. "
+            "이 3개의 주제를 연결하여 하나의 블로그 포스트로 작성할 수 있는 방안을 제시해주세요:\n{pick_subject}\n\n전략적 요약 및 연결 방안:"
         )
-        chain = prompt | llm
-        output = chain.invoke({"input": state["input"]}).content
-        return {"input": state["input"], "output": output}
+        chain = prompt | llm | StrOutputParser()
+        strategist = chain.invoke({"pick_subject": state["pick_subject"]})
+        new_state = dict(state)
+        new_state["strategist"] = strategist
+        return AgentState(**new_state)
 
-    # BlogWriterAgent 정의
-    def blog_writer_agent(state):
+    def blog_writer_agent(state: AgentState) -> AgentState:
         prompt = ChatPromptTemplate.from_template(
-            "다음 지침을 따라 블로그 포스트를 작성해주세요:\n"
-            "1. E-E-A-T 기준을 준수하여 전문성과 경험을 보여주는 내용을 포함하세요.\n"
-            "2. 독창적이고 고품질의 콘텐츠를 작성하세요. 특히 짧은 내용의 경우 독창성에 주의를 기울이세요.\n"
-            "3. 작성자 정보와 날짜를 명확히 표시하세요.\n"
-            "4. 주제와 관련된 신뢰할 수 있는 외부 링크를 포함하세요.\n"
-            "5. YMYL(Your Money Your Life) 주제에 대해 특별히 주의를 기울이세요.\n"
-            "6. 글의 주제에 집중하고 일관성을 유지하세요.\n"
-            "7. 사용자 경험을 고려하여 읽기 쉽고 유용한 콘텐츠를 만드세요.\n"
-            "8. 적절한 키워드를 자연스럽게 사용하세요.\n\n"
-            "주제: {input}\n\n"
+            "다음 지침과 search engine optimization점수를 최대한 높힐 수있는 방법을 생각하여 3개의 주제를 연결한 하나의 블로그 포스트를 제목과 포함해서 작성해주세요:\n"
+            "1. E-E-A-T(경험, 전문성, 권위성, 신뢰성) 기준을 준수하여 전문성과 경험을 보여주는 내용을 포함하세요.\n"
+            "2. 독창적이고 고품질의 콘텐츠를 작성하세요.\n"
+            f"3. 작성자 정보는 {reporter}로 해주고 날짜는 {today_date}로 표시하세요.\n"
+            "4. 3개의 주제를 자연스럽게 연결하여 하나의 일관된 블로그 포스트로 작성하세요.\n"
+            "5. 글의 구조는 도입부, 각 주제별 본문, 그리고 3개 주제를 종합한 결론으로 구성하세요.\n"
+            "6. 사용자 경험을 고려하여 읽기 쉽고 유용한 콘텐츠를 만드세요.\n"
+            "7. 적절한 키워드를 자연스럽게 사용하세요.\n\n"
+            "주제 및 전략: {strategist}\n\n"
             "블로그 포스트:"
         )
-        chain = prompt | llm
-        output = chain.invoke({"input": state["input"]}).content
-        return {"input": state["input"], "output": output}
-
-    # SEOEvaluatorAgent 정의
-    def seo_evaluator_agent(state):
+        chain = prompt | llm | StrOutputParser()
+        blog_output = chain.invoke({"strategist": state["strategist"]})
+        new_state = dict(state)
+        new_state["blog_output"] = blog_output
+        return AgentState(**new_state)
+    
+    def seo_content_analyst_agent(state: AgentState) -> AgentState:
         prompt = ChatPromptTemplate.from_template(
-            "다음 기준에 따라 블로그 포스트의 SEO 점수를 0에서 100 사이의 정수로 평가해주세요:\n"
+            "다음 블로그 포스트를 분석하고 SEO를 개선하기 위해 다음 작업을 수행해주세요:\n"
+            "1. 적절한 위치에 썸네일과 이미지를 추가하세요. 이미지 위치는 [썸네일 이미지 설명], [이미지 설명] 형식으로 표시합니다.\n"
+            "2. 글 마지막에 관련 출처의 하이퍼링크를 추가하세요.\n"
+            "3. 이 글에 적합한 태그를 10개 이하로 선정해주세요.\n"
+            "4. 원본 글의 내용은 유지하면서 위의 요소들을 자연스럽게 통합하세요.\n\n"
+            "블로그 포스트:\n{blog_output}\n\n"
+            "SEO 개선된 블로그 포스트:"
+        )
+        chain = prompt | llm | StrOutputParser()
+        seo_content = chain.invoke({"blog_output": state["blog_output"]})
+        new_state = dict(state)
+        new_state["seo_content"] = seo_content
+        return AgentState(**new_state)
+    
+
+    def seo_evaluator_agent(state: AgentState) -> AgentState:
+        prompt = ChatPromptTemplate.from_template(
+            "다음 기준에 따라 블로그 포스트의 SEO(검색 엔진 최적화) 점수를 0에서 100 사이의 정수로 평가해주세요:\n"
             "1. E-E-A-T (경험, 전문성, 권위성, 신뢰성) 준수 여부\n"
             "2. 콘텐츠의 독창성과 품질\n"
             "3. 작성자 정보와 날짜 표시의 명확성\n"
-            "4. 관련성 있는 외부 링크 포함 여부\n"
-            "5. YMYL(Your Money Your Life) 주제에 대한 적절한 처리\n"
-            "6. 주제의 일관성과 집중도\n"
-            "7. 사용자 경험과 가독성\n"
-            "8. 키워드 사용의 적절성\n"
-            "9. 메타 데이터 (제목, 설명 등)의 최적화\n"
-            "10. 모바일 친화성\n\n"
-            "각 항목에 대한 점수와 개선점을 제시한 후, 최종 SEO 점수를 다음 형식으로 제공해주세요:\n"
-            "SEO 점수: [0-100 사이의 정수]\n"
+            "4. YMYL(Your Money Your Life) 주제에 대한 적절한 처리\n"
+            "5. 주제의 일관성과 집중도\n"
+            "6. 사용자 경험과 가독성\n"
+            "7. 키워드 사용의 적절성\n"
+            "8. 메타 데이터 (제목, 설명 등)의 최적화\n"
+            "9. 이미지 사용의 적절성\n"
+            "10. 출처 링크의 관련성\n"
+            "11. 태그의 적절성\n\n"
+            "각 항목에 대한 점수와 개선점을 제시한 후, 최종 SEO 점수를 다음 형식으로 반드시 제공해주세요:\n"
+            "SEO 점수: [0-100]/100\n"
             "개선점: [간단한 설명]\n\n"
-            "블로그 포스트:\n{input}\n\n"
+            "블로그 포스트:\n{seo_content}\n\n"
             "SEO 평가:"
         )
-        chain = prompt | llm
-        output = chain.invoke({"input": state["input"]}).content
+        chain = prompt | llm | StrOutputParser()
+        seo_evaluation = chain.invoke({"seo_content": state["seo_content"]})
         
-        # SEO 점수 추출
         try:
-            score_line = [line for line in output.split('\n') if line.startswith("SEO 점수:")][0]
-            score = int(score_line.split(":")[1].strip())
-        except (ValueError, IndexError):
-            print(f"Failed to parse SEO score from: {output}")
-            score = 0
+            score_match = re.search(r'SEO 점수:\s*(\d+)(?:/100)?', seo_evaluation, re.IGNORECASE)
+            if score_match:
+                SEO_score = int(score_match.group(1))
+            else:
+                raise ValueError("SEO score not found in the evaluation")
+        except Exception as e:
+            print(f"Failed to parse SEO score: {e}")
+            print("SEO evaluation:", seo_evaluation)
+            SEO_score = 0
         
-        return {"input": state["input"], "output": {"score": score, "feedback": output}}
+        new_state = dict(state)
+        new_state["SEO_score"] = SEO_score
+        new_state["seo_evaluation"] = seo_evaluation
+        return AgentState(**new_state)
 
-    # 노드 추가
     workflow.add_node("trend_analyst", trend_analyst_agent)
     workflow.add_node("content_strategist", content_strategist_agent)
     workflow.add_node("blog_writer", blog_writer_agent)
+    workflow.add_node("seo_content_analyst", seo_content_analyst_agent)
     workflow.add_node("seo_evaluator", seo_evaluator_agent)
 
-    # 엣지 연결
     workflow.set_entry_point("trend_analyst")
     workflow.add_edge("trend_analyst", "content_strategist")
     workflow.add_edge("content_strategist", "blog_writer")
-    workflow.add_edge("blog_writer", "seo_evaluator")
+    workflow.add_edge("blog_writer", "seo_content_analyst")
+    workflow.add_edge("seo_content_analyst", "seo_evaluator")
 
-    # SEO 점수에 따른 조건부 엣지
     def route_based_on_seo(state):
-        seo_score = state["seo_evaluator"]["output"]["score"]
-        if seo_score >= 80:
-            return END
-        else:
-            return "content_strategist"
+        return END if state["SEO_score"] >= 70 else "content_strategist"
 
     workflow.add_conditional_edges(
         "seo_evaluator",
@@ -115,14 +145,26 @@ def create_workflow(api_key):
 
     return workflow.compile()
 
-def run_workflow(app, input_data):
-    result = {}
-    for step in app.stream({"input": input_data, "output": None}):
+def run_workflow(workflow, input_data):
+    state = AgentState(input=input_data)
+    final_state = {'input': input_data}  # Initialize with input data
+    for step in workflow.stream(state):
         for key, value in step.items():
             if key != 'input':
-                result[key] = value
-        print(f"Step completed: {key}")  # 디버깅을 위한 출력 추가
+                print(f"Step completed: {key}")
+                if key == "trend_analyst":
+                    print("Selected subjects:", value["pick_subject"])
+                elif key == "content_strategist":
+                    print("Content strategy:", value["strategist"])
+                elif key == "blog_writer":
+                    print("Blog post written. Length:", len(value["blog_output"]))
+                elif key == "seo_content_analyst":
+                    print("SEO content analysis completed. Length:", len(value["seo_content"]))
+                elif key == "seo_evaluator":
+                    print("SEO score:", value["SEO_score"])
+                    print("SEO evaluation:", value["seo_evaluation"])
+                print("-" * 50)
+                final_state.update(value)  # Update final_state with all values
         if END in step:
             break
-    print(f"Final result: {result}")  # 최종 결과 출력
-    return result
+    return final_state

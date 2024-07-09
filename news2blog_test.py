@@ -97,7 +97,11 @@ class NewsBot:
                 
                 cleaned_content = self.clean_content(content)
                 
-                parsed_data.append({"title": title, "content": cleaned_content})
+                parsed_data.append({
+                    "title": title, 
+                    "content": cleaned_content, 
+                    "link": article['link']
+                })
             except Exception as e:
                 print(f"Failed to parse article: {article['title']}. Error: {e}")
         return parsed_data
@@ -114,7 +118,7 @@ class NewsBot:
         full_path = os.path.join(directory, filename)
         
         with open(full_path, 'w', newline='', encoding='utf-8') as file:
-            writer = csv.DictWriter(file, fieldnames=["title", "content"])
+            writer = csv.DictWriter(file, fieldnames=["title", "content", "link"])
             writer.writeheader()
             for article in data:
                 writer.writerow(article)
@@ -146,10 +150,10 @@ class NewsBot:
             result = run_workflow(self.ai_workflow, input_data)
             
             print(f"Workflow result: {result}")
-        
+            
             self.save_agent_results(result)
             
-            blog_post = result['blog_output']
+            blog_post = result['seo_content']
             seo_score = result['SEO_score']
             
             self.post_to_blog(blog_post)
@@ -207,7 +211,7 @@ def main():
                 bot.run_cycle("night_to_morning")
             elif now.hour == 21 and now.minute == 55:
                 bot.run_cycle("morning_to_noon")
-            elif now.hour == 22 and now.minute == 47:
+            elif now.hour == 23 and now.minute == 31:
                 bot.run_cycle("noon_to_evening")
             time.sleep(60)  # 1분마다 체크
 

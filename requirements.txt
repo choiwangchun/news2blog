@@ -11,3 +11,4 @@ pandas
 discord.py
 langchain-google-genai
 PyNaCl
+ipython
