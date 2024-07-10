@@ -84,7 +84,6 @@ def create_workflow_test(api_key, csv_directory, reporter='By Investing', today_
             "3. 3개의 주제를 자연스럽게 연결하여 하나의 일관된 블로그 포스트로 작성하세요.\n"
             "4. 사용자 경험을 고려하여 읽기 쉽고 유용한 콘텐츠를 만드세요.\n"
             "5. 적절한 키워드를 자연스럽게 사용하세요.\n"
-            "6. 태그를 10개 이하로 선정해주세요\n\n"
             "주제 및 전략: {strategist}\n\n"
             "블로그 포스트:"
         )

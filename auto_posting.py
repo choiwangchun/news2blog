@@ -31,7 +31,7 @@ def get_title_content_and_tags():
     with open(os.path.join(folder_path, 'related_links.txt'), 'r', encoding='utf-8') as f:
         links = f.readlines()
     
-    related_links = "**관련출처:**\n" + ''.join([f"-{link.strip()}\n" for link in links])
+    related_links = "**관련출처:**\n" + ''.join([f"- {link.strip()}\n" for link in links])
     
     with open(os.path.join(folder_path, 'tags.txt'), 'r', encoding='utf-8') as f:
         tags = f.read()

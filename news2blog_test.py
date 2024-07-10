@@ -13,6 +13,7 @@ from dotenv import load_dotenv
 from ai_workflow_test import create_workflow_test, run_workflow_test
 from selenium.common.exceptions import TimeoutException
 from selenium.webdriver.common.action_chains import ActionChains
+from auto_posting_test import TistoryPoster
 
 load_dotenv()
 
@@ -25,6 +26,7 @@ class NewsBot:
         self.ai_workflow = create_workflow_test(self.api_key, self.csv_directory)
         self.news_directory = self.csv_directory
         self.current_result_directory = None
+        self.tistory_poster = TistoryPoster()
 
         if not os.path.exists(self.agent_result_directory):
             os.makedirs(self.agent_result_directory)
@@ -163,31 +165,81 @@ class NewsBot:
         os.makedirs(new_directory, exist_ok=True)
         self.current_result_directory = new_directory
         print(f"Created new result directory: {new_directory}")
+        return new_directory
 
+    def get_result_files(self):
+        blog_title_path = os.path.join(self.current_result_directory, 'blog_title.txt')
+        blog_content_path = os.path.join(self.current_result_directory, 'blog_content.txt')
+        related_links_path = os.path.join(self.current_result_directory, 'related_links.txt')
+        tags_path = os.path.join(self.current_result_directory, 'tags.txt')
+        
+        return blog_title_path, blog_content_path, related_links_path, tags_path
+    
 
     def run_cycle(self, time_period):
         try:
-            self.create_new_result_directory()
+            # 새로운 결과 디렉토리 생성
+            result_directory = self.create_new_result_directory()
+            
+            # Selenium 설정
             self.setup_selenium()
+            
+            # 뉴스 크롤링
             raw_data = self.crawl_investing_com(time_period)
+            
+            # 뉴스 데이터 파싱
             parsed_data = self.parse_news_data(raw_data)
+            
+            # 파싱된 데이터를 CSV로 저장
             self.save_to_csv(parsed_data)
             
+            # 최신 CSV 파일 가져오기
             latest_csv = self.get_latest_csv(self.csv_directory)
+            
+            # CSV 파일 내용 읽기
             input_data = self.read_csv_file(latest_csv)
 
+            # AI 워크플로우 실행
             result = run_workflow_test(self.ai_workflow, input_data, self.current_result_directory)
             
             print(f"Workflow result: {result}")
             print(f"Result keys: {result.keys()}")
 
+            # AI 워크플로우 결과 저장
             self.save_agent_results(result)
             
-            blog_post = result.get('blog_content', '')  # 'blog_content' 키가 없으면 빈 문자열 반환
+            # 결과 파일 경로 가져오기
+            blog_title_path, blog_content_path, related_links_path, tags_path = self.get_result_files()
+
+            # 블로그 제목 읽기
+            with open(blog_title_path, 'r', encoding='utf-8') as f:
+                blog_title = f.read().strip().replace('#', '')
+
+            # 블로그 내용 읽기
+            with open(blog_content_path, 'r', encoding='utf-8') as f:
+                blog_content = f.read()
+
+            # 관련 링크 읽기
+            with open(related_links_path, 'r', encoding='utf-8') as f:
+                links = f.readlines()
+                related_links = "**관련출처:**\n" + ''.join([f"- {link.strip()}\n" for link in links])
+
+            # 태그 읽기
+            with open(tags_path, 'r', encoding='utf-8') as f:
+                tags = f.read().replace('**태그:**', '').replace('#', '').replace(' ', '').strip()
+
+            # 전체 내용 조합
+            full_content = blog_content + "\n\n" + related_links
+
+            # 블로그에 포스팅
+            self.post_to_blog(blog_title, full_content, tags)
+            
+            # SEO 점수 가져오기 (결과에 있다고 가정)
             seo_score = result.get('SEO_score', 0)
             
-            self.post_to_blog(blog_post)
-            self.save_result(blog_post, seo_score)
+            # 결과 저장
+            self.save_result(full_content, seo_score)
+            
             print(f"새 블로그 포스트가 작성되었습니다. SEO 점수: {seo_score}")
         
         except Exception as e:
@@ -195,8 +247,12 @@ class NewsBot:
             import traceback
             traceback.print_exc()
         finally:
+            # Selenium 드라이버 종료
             if self.driver:
                 self.driver.quit()
+
+    def post_to_blog(self, title, content, tags):
+        self.tistory_poster.post_to_tistory(title, content, tags)
 
     def save_agent_results(self, result):
         for agent, data in result.items():
@@ -237,10 +293,8 @@ def main():
             now = datetime.now()
             if now.hour == 14 and now.minute == 4:
                 bot.run_cycle("night_to_morning")
-            elif now.hour == 21 and now.minute == 17:
+            elif now.hour == 22 and now.minute == 50:
                 bot.run_cycle("morning_to_noon")
-            elif now.hour == 23 and now.minute == 31:
-                bot.run_cycle("noon_to_evening")
             time.sleep(60)  # 1분마다 체크
 
     try:
