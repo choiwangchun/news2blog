@@ -10,7 +10,9 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from dotenv import load_dotenv
-from ai_workflow import create_workflow, run_workflow
+from ai_workflow_test import create_workflow_test, run_workflow_test
+from selenium.common.exceptions import TimeoutException
+from selenium.webdriver.common.action_chains import ActionChains
 
 load_dotenv()
 
@@ -18,10 +20,11 @@ class NewsBot:
     def __init__(self):
         self.driver = None 
         self.api_key = os.getenv('GOOGLE_API_KEY')
-        self.ai_workflow = create_workflow(self.api_key)
         self.csv_directory = r"C:\Users\slek9\PycharmProjects\news2blog\parsing_news"
         self.agent_result_directory = r"C:\Users\slek9\PycharmProjects\news2blog\Agent_result"
+        self.ai_workflow = create_workflow_test(self.api_key, self.csv_directory)
         self.news_directory = self.csv_directory
+        self.current_result_directory = None
 
         if not os.path.exists(self.agent_result_directory):
             os.makedirs(self.agent_result_directory)
@@ -122,8 +125,24 @@ class NewsBot:
             writer.writeheader()
             for article in data:
                 writer.writerow(article)
-        
+
         print(f"Data saved to {full_path}")
+
+
+    def get_related_links(self, title, content):
+        latest_csv = self.get_latest_csv(self.csv_directory)
+        related_links = []
+        
+        with open(latest_csv, 'r', encoding='utf-8') as file:
+            reader = csv.DictReader(file)
+            for row in reader:
+                if (title.lower() in row['title'].lower()) or any(word in row['content'].lower() for word in content.lower().split()[:10]):
+                    related_links.append(row['link'])
+                    if len(related_links) == 3:
+                        break
+        
+        return related_links
+
 
     def get_latest_csv(self, directory):
         csv_files = [f for f in os.listdir(directory) if f.endswith('.csv')]
@@ -137,8 +156,18 @@ class NewsBot:
         with open(file_path, 'r', encoding='utf-8') as f:
             return f.read()
 
+
+    def create_new_result_directory(self):
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        new_directory = os.path.join(self.agent_result_directory, timestamp)
+        os.makedirs(new_directory, exist_ok=True)
+        self.current_result_directory = new_directory
+        print(f"Created new result directory: {new_directory}")
+
+
     def run_cycle(self, time_period):
         try:
+            self.create_new_result_directory()
             self.setup_selenium()
             raw_data = self.crawl_investing_com(time_period)
             parsed_data = self.parse_news_data(raw_data)
@@ -147,14 +176,15 @@ class NewsBot:
             latest_csv = self.get_latest_csv(self.csv_directory)
             input_data = self.read_csv_file(latest_csv)
 
-            result = run_workflow(self.ai_workflow, input_data)
+            result = run_workflow_test(self.ai_workflow, input_data, self.current_result_directory)
             
             print(f"Workflow result: {result}")
-            
+            print(f"Result keys: {result.keys()}")
+
             self.save_agent_results(result)
             
-            blog_post = result['seo_content']
-            seo_score = result['SEO_score']
+            blog_post = result.get('blog_content', '')  # 'blog_content' 키가 없으면 빈 문자열 반환
+            seo_score = result.get('SEO_score', 0)
             
             self.post_to_blog(blog_post)
             self.save_result(blog_post, seo_score)
@@ -169,11 +199,10 @@ class NewsBot:
                 self.driver.quit()
 
     def save_agent_results(self, result):
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         for agent, data in result.items():
             if agent != 'input':
-                file_name = f"{agent}_result_{timestamp}.csv"
-                file_path = os.path.join(self.agent_result_directory, file_name)
+                file_name = f"{agent}_result.csv"
+                file_path = os.path.join(self.current_result_directory, file_name)
                 
                 if isinstance(data, dict):
                     with open(file_path, 'w', newline='', encoding='utf-8') as f:
@@ -191,9 +220,8 @@ class NewsBot:
         print(blog_post[:500] + "..." if len(blog_post) > 500 else blog_post)
 
     def save_result(self, blog_post, seo_score):
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        file_name = f"blog_post_{timestamp}.txt"
-        file_path = os.path.join(self.agent_result_directory, file_name)
+        file_name = "blog_post.txt"
+        file_path = os.path.join(self.current_result_directory, file_name)
         
         with open(file_path, 'w', encoding='utf-8') as f:
             f.write(f"SEO Score: {seo_score}\n\n")
@@ -207,9 +235,9 @@ def main():
     def run_schedule():
         while True:
             now = datetime.now()
-            if now.hour == 0 and now.minute == 36:
+            if now.hour == 14 and now.minute == 4:
                 bot.run_cycle("night_to_morning")
-            elif now.hour == 21 and now.minute == 55:
+            elif now.hour == 21 and now.minute == 17:
                 bot.run_cycle("morning_to_noon")
             elif now.hour == 23 and now.minute == 31:
                 bot.run_cycle("noon_to_evening")

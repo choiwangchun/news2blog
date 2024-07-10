@@ -1,179 +1,92 @@
+from langchain.vectorstores import FAISS
+from langchain.embeddings import HuggingFaceEmbeddings
+from langchain.schema import Document
+import csv
 import os
-import glob
-from datetime import datetime
-from langchain.prompts import ChatPromptTemplate
-from langchain_core.output_parsers import StrOutputParser
-from langgraph.graph import StateGraph, END
-from typing import TypedDict
-from langchain_google_genai import ChatGoogleGenerativeAI
-from dotenv import load_dotenv
-import pandas as pd
-import re
 
-load_dotenv()
+class TestNewsBot:
+    def __init__(self):
+        self.csv_directory = r"C:\Users\slek9\PycharmProjects\news2blog\parsing_news"
+        self.embeddings = HuggingFaceEmbeddings()
 
-reporter = 'AI기자 choi'
-today_date = datetime.now().strftime("%Y-%m-%d")
+    def get_latest_csv(self, directory):
+        csv_files = [f for f in os.listdir(directory) if f.endswith('.csv')]
+        if not csv_files:
+            raise FileNotFoundError("No CSV files found in the directory.")
+        
+        latest_file = max(csv_files, key=lambda x: os.path.getctime(os.path.join(directory, x)))
+        return os.path.join(directory, latest_file)
 
-class AgentState(TypedDict, total=False):
-    input: str
-    pick_subject: str
-    strategist: str
-    blog_output: str
-    SEO_score: int
-    seo_evaluation: str
+    def get_related_links(self, title, content):
+        latest_csv = self.get_latest_csv(self.csv_directory)
+        
+        # CSV 파일에서 뉴스 기사 읽기
+        documents = []
+        with open(latest_csv, 'r', encoding='utf-8') as file:
+            reader = csv.DictReader(file)
+            for row in reader:
+                doc = Document(
+                    page_content=f"{row['title']} {row['content']}",
+                    metadata={"link": row['link']}
+                )
+                documents.append(doc)
 
-def get_latest_csv(directory):
-    csv_files = glob.glob(os.path.join(directory, '*.csv'))
-    if not csv_files:
-        raise FileNotFoundError("No CSV files found in the directory.")
-    return max(csv_files, key=os.path.getctime)
+        # FAISS 벡터 저장소 생성
+        vectorstore = FAISS.from_documents(documents, self.embeddings)
 
-def read_csv_file(file_path):
-    df = pd.read_csv(file_path)
-    return df.to_string(index=False)
+        # 블로그 포스트 내용으로 유사한 문서 검색
+        query = f"{title} {content}"
+        related_docs = vectorstore.similarity_search(query, k=3)
 
-llm = ChatGoogleGenerativeAI(model='gemini-1.5-pro', temperature=0.8, google_api_key=os.getenv('GOOGLE_API_KEY'))
+        # 관련 링크 추출
+        related_links = [doc.metadata['link'] for doc in related_docs]
+        
+        return related_links
 
-workflow = StateGraph(AgentState)
-
-def trend_analyst_agent(state: AgentState) -> AgentState:
-    prompt = ChatPromptTemplate.from_template(
-        "다음 뉴스 데이터를 분석하고, 현재 가장 트렌디하고 인기 있는 주제 3개를 선정해주세요:\n{input}\n\n트렌디한 주제 3개:"
-    )
-    chain = prompt | llm | StrOutputParser()
-    pick_subject = chain.invoke({"input": state["input"]})
-    return AgentState(input=state["input"], pick_subject=pick_subject)
-
-def content_strategist_agent(state: AgentState) -> AgentState:
-    prompt = ChatPromptTemplate.from_template(
-        "다음 3개의 트렌디한 주제들을 바탕으로, E-E-A-T(경험, 전문성, 권위성, 신뢰성) 기준을 고려하여 각 주제를 요약해주세요. "
-        "이 3개의 주제를 연결하여 하나의 블로그 포스트로 작성할 수 있는 방안을 제시해주세요:\n{pick_subject}\n\n전략적 요약 및 연결 방안:"
-    )
-    chain = prompt | llm | StrOutputParser()
-    strategist = chain.invoke({"pick_subject": state["pick_subject"]})
+def main():
+    test_bot = TestNewsBot()
     
-    # 기존 상태를 복사하고 새로운 값을 업데이트
-    new_state = dict(state)
-    new_state["strategist"] = strategist
-    return AgentState(**new_state)
+    # 테스트용 제목과 내용
+    test_title = "글로벌 경제, 불확실성의 그림자: 인플레이션, 금리, 그리고 중국 경제 둔화"
+    test_content = """**By Investing | 2024-07-10**
 
-def blog_writer_agent(state: AgentState) -> AgentState:
-    prompt = ChatPromptTemplate.from_template(
-        "다음 지침과 search engine optimization점수를 최대한 높힐 수있는 방법을 생각하여 3개의 주제를 연결한 하나의 블로그 포스트를 작성해주세요:\n"
-        "1. E-E-A-T(경험, 전문성, 권위성, 신뢰성) 기준을 준수하여 전문성과 경험을 보여주는 내용을 포함하세요.\n"
-        "2. 독창적이고 고품질의 콘텐츠를 작성하세요.\n"
-        f"3. 작성자 정보는 {reporter}로 해주고 날짜는 {today_date}로 표시하세요.\n"
-        "4. 3개의 주제를 자연스럽게 연결하여 하나의 일관된 블로그 포스트로 작성하세요.\n"
-        "5. 글의 구조는 도입부, 각 주제별 본문, 그리고 3개 주제를 종합한 결론으로 구성하세요.\n"
-        "6. 사용자 경험을 고려하여 읽기 쉽고 유용한 콘텐츠를 만드세요.\n"
-        "7. 적절한 키워드를 자연스럽게 사용하세요.\n\n"
-        "주제 및 전략: {strategist}\n\n"
-        "블로그 포스트:"
-    )
-    chain = prompt | llm | StrOutputParser()
-    blog_output = chain.invoke({"strategist": state["strategist"]})
-    new_state = dict(state)
-    new_state["blog_output"] = blog_output
-    return AgentState(**new_state)
+    [**썸네일 이미지 설명: 어두운 배경에 세계 지도와 하락하는 화살표 그래프, 흐릿한 사람들 실루엣**]
 
-def seo_evaluator_agent(state: AgentState) -> AgentState:
-    prompt = ChatPromptTemplate.from_template(
-        "다음 기준에 따라 블로그 포스트의 SEO(검색 엔진 최적화) 점수를 0에서 100 사이의 정수로 평가해주세요:\n"
-        "1. E-E-A-T (경험, 전문성, 권위성, 신뢰성) 준수 여부\n"
-        "2. 콘텐츠의 독창성과 품질\n"
-        "3. 작성자 정보와 날짜 표시의 명확성\n"
-        "4. YMYL(Your Money Your Life) 주제에 대한 적절한 처리\n"
-        "5. 주제의 일관성과 집중도\n"
-        "6. 사용자 경험과 가독성\n"
-        "7. 키워드 사용의 적절성\n"
-        "8. 메타 데이터 (제목, 설명 등)의 최적화\n\n"
-        "각 항목에 대한 점수와 개선점을 제시한 후, 최종 SEO 점수를 다음 형식으로 반드시 제공해주세요:\n"
-        "SEO 점수: [0-100]/100\n"
-        "개선점: [간단한 설명]\n\n"
-        "블로그 포스트:\n{blog_output}\n\n"
-        "SEO 평가:"
-    )
-    chain = prompt | llm | StrOutputParser()
-    seo_evaluation = chain.invoke({"blog_output": state["blog_output"]})
+    전 세계적인 인플레이션 완화 추세에도 불구하고 경기 침체 우려는 여전히 남아있습니다. 특히 중국 경제 회복 둔화는 글로벌 경제에 불확실성을 더하는 요인입니다. 이 글에서는 현재 글로벌 경제 상황을 3가지 키워드 - 인플레이션, 금리, 중국 - 를 중심으로 분석하고 앞으로의 전망을 살펴보겠습니다.
+
+    ### 1. 인플레이션, 진정 국면? 아직 안심하기 일러…
+
+    [**이미지 설명: 상승하는 물가 그래프와 함께 마트에서 장을 보며 걱정하는 사람들**]
+
+    최근 미국 소비자물가지수(CPI) 상승률이 둔화하며 인플레이션이 정점을 지났다는 분석이 나오고 있습니다. 하지만,  근원 물가 상승률은 여전히 높은 수준이며, 러시아-우크라이나 전쟁 장기화, 공급망 불안 등 변수가 많아 안심하기는 이릅니다. 국제통화기금(IMF)은 올해 세계 경제 성장률 전망치를 하향 조정하며 인플레이션의 하방 리스크를 경고했습니다. 특히 에너지 및 식료품 가격 변동성이 커지면서 저소득 국가를 중심으로 경제적 어려움이 가중될 수 있다는 우려가 제기되고 있습니다.
+
+    ### 2. 긴축 정책, 언제까지? 시장의 눈은 연준으로…
+
+    [**이미지 설명: 미국 연방준비제도 건물 사진과 함께 금리 인상을 나타내는 그래프**]
+
+    미국 연방준비제도(Fed)는 인플레이션을 잡기 위해 공격적인 금리 인상을 단행해왔습니다.  최근 제롬 파월 연준 의장은 9월 연방공개시장위원회(FOMC)에서 금리 인상을 중단할 가능성을 시사했지만,  "인플레이션이 목표 수준으로 지속적으로 하락하고 있다는 확신이 들 때까지 긴축적인 정책 기조를 유지할 것"이라고 강조했습니다. 시장에서는 9월 금리 인상 동결 가능성을 높게 점치고 있지만, 향후 발표될 경제 지표와 연준 위원들의 발언에 따라 금리 인하 시점에 대한 전망은 달라질 수 있습니다.  
+
+    ### 3. '세계의 공장' 멈추나? 중국 경제 둔화, 글로벌 경제에 미치는 영향은?
+
+    [**이미지 설명: 멈춰있는 공장 사진과 함께 하락하는 중국 경제 성장률 그래프**]
+
+    세계 경제 성장의 엔진 역할을 해왔던 중국 경제가 좀처럼 활력을 찾지 못하고 있습니다.  6월 중국 소비자물가지수(CPI) 상승률은 전년 동월 대비 0%를 기록하며 디플레이션 우려까지 제기되고 있습니다. 부동산 경기 침체 장기화, 청년 실업률 증가, 소비 심리 위축 등이 겹치면서 중국 경제 회복이 지연될 수 있다는 전망이 나옵니다. 중국은 세계 원자재 수요의 상당 부분을 차지하고 있어, 중국 경제 둔화는 글로벌 원자재 시장에도 부정적인 영향을 미칠 수 있습니다. 
+
+    ### 4. 불확실성 속에서 우리는?
+
+    [**이미지 설명: 다양한 투자 포트폴리오를 보여주는 이미지**]
+
+    현재 글로벌 경제는 인플레이션 완화, 금리 인상 사이클 종료 기대감, 중국 경제 둔화 우려 등  복합적인 요인들이 작용하며 불확실성이 높은 상황입니다. 투자자들은 변동성 확대 가능성에 대비해야 하며,  경제 지표 발표,  중앙은행들의 통화 정책 변화, 지정학적 리스크 등을 예의주시할 필요가 있습니다. 또한, 분산 투자,  가치주 중심의 투자 전략을 통해 리스크 관리에 힘써야 할 것입니다."""
     
-    try:
-        score_match = re.search(r'SEO 점수:\s*(\d+)(?:/100)?', seo_evaluation, re.IGNORECASE)
-        if score_match:
-            SEO_score = int(score_match.group(1))
-        else:
-            raise ValueError("SEO score not found in the evaluation")
-    except Exception as e:
-        print(f"Failed to parse SEO score: {e}")
-        print("SEO evaluation:", seo_evaluation)
-        SEO_score = 0
-    
-    new_state = dict(state)
-    new_state["SEO_score"] = SEO_score
-    new_state["seo_evaluation"] = seo_evaluation
-    return AgentState(**new_state)
+    # 관련 링크 가져오기
+    related_links = test_bot.get_related_links(test_title, test_content)
 
-workflow.add_node("trend_analyst", trend_analyst_agent)
-workflow.add_node("content_strategist", content_strategist_agent)
-workflow.add_node("blog_writer", blog_writer_agent)
-workflow.add_node("seo_evaluator", seo_evaluator_agent)
-
-workflow.set_entry_point("trend_analyst")
-workflow.add_edge("trend_analyst", "content_strategist")
-workflow.add_edge("content_strategist", "blog_writer")
-workflow.add_edge("blog_writer", "seo_evaluator")
-
-def route_based_on_seo(state):
-    return END if state["SEO_score"] >= 70 else "content_strategist"
-
-workflow.add_conditional_edges(
-    "seo_evaluator",
-    route_based_on_seo,
-    {
-        END: END,
-        "content_strategist": "content_strategist"
-    }
-)
-
-app = workflow.compile()
-
-def run_workflow(input_data):
-    state = AgentState(input=input_data)
-    final_state = {}
-    for step in app.stream(state):
-        for key, value in step.items():
-            if key != 'input':
-                print(f"Step completed: {key}")
-                if key == "trend_analyst":
-                    print("Selected subjects:", value["pick_subject"])
-                elif key == "content_strategist":
-                    print("Content strategy:", value["strategist"])
-                elif key == "blog_writer":
-                    print("Blog post written. Length:", len(value["blog_output"]))
-                elif key == "seo_evaluator":
-                    print("SEO score:", value["SEO_score"])
-                    print("SEO evaluation:", value["seo_evaluation"])
-                print("-" * 50)
-                final_state.update(value)
-        if END in step:
-            break
-    return final_state
+    # 결과 출력
+    print("테스트 제목:", test_title)
+    print("테스트 내용:", test_content)
+    print("\n관련 링크:")
+    for i, link in enumerate(related_links, 1):
+        print(f"{i}. {link}")
 
 if __name__ == "__main__":
-    csv_directory = r"C:\Users\slek9\PycharmProjects\news2blog\parsing_news"
-    latest_csv = get_latest_csv(csv_directory)
-    input_data = read_csv_file(latest_csv)
-    result = run_workflow(input_data)
-    
-    print("\nFinal Blog Post (Markdown format):")
-    if "blog_output" in result:
-        print("```markdown")
-        print(result["blog_output"])
-        print("```")
-    else:
-        print("Error: Blog output not generated. Workflow may have failed.")
-    
-    if "SEO_score" in result:
-        print(f"\nFinal SEO Score: {result['SEO_score']}")
-    else:
-        print("Error: SEO score not available. Workflow may have failed.")
+    main()
