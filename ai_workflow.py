@@ -24,7 +24,7 @@ class AgentState(TypedDict, total=False):
     related_links: list
     tags: str
 
-def create_workflow_test(api_key, csv_directory, reporter='By Investing', today_date=None):
+def create_workflow(api_key, csv_directory, reporter='By Investing', today_date=None):
     if today_date is None:
         from datetime import datetime
         today_date = datetime.now().strftime("%Y-%m-%d")
@@ -64,6 +64,7 @@ def create_workflow_test(api_key, csv_directory, reporter='By Investing', today_
 
     def blog_writer_agent(state: AgentState) -> AgentState:
         prompt = ChatPromptTemplate.from_template(
+            "2000자 이상 2500자 미만으로 작성\n\n"
             "다음 지침에 따라 3개의 주제를 연결한 하나의 블로그 포스트를 작성해주세요. 반드시 아래 형식을 따라주세요:\n\n"
             "제목: [주제를 잘 반영한 제목]\n\n"
             f"내용:\n**{reporter} | {today_date}**\n"
@@ -99,6 +100,7 @@ def create_workflow_test(api_key, csv_directory, reporter='By Investing', today_
         prompt = ChatPromptTemplate.from_template(
             "다음 블로그 포스트 내용을 바탕으로 SEO에 최적화된 매력적인 제목을 1줄로 작성해주세요:\n{blog_content}\n\n제목:"
             "(예시 형식: 글로벌 경제, 불확실성의 그림자: 인플레이션, 금리, 그리고 중국 경제 둔화)"
+            "반드시 이모지를 넣지 마세요"
         )
         chain = prompt | llm | StrOutputParser()
         blog_title = chain.invoke({"blog_content": state["blog_content"]})
@@ -209,7 +211,7 @@ def create_workflow_test(api_key, csv_directory, reporter='By Investing', today_
 
     return workflow.compile()
 
-def run_workflow_test(workflow, input_data, result_directory):
+def run_workflow(workflow, input_data, result_directory):
     state = AgentState(input=input_data)
     final_state = {'input': input_data}
     for step in workflow.stream(state):

@@ -1,3 +1,5 @@
+# news2blog.py
+
 import schedule
 import time
 import csv
@@ -10,9 +12,12 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from dotenv import load_dotenv
-from ai_workflow_test import create_workflow_test, run_workflow_test
 from selenium.common.exceptions import TimeoutException
 from selenium.webdriver.common.action_chains import ActionChains
+from auto_posting import TistoryPoster
+from ai_workflow import create_workflow, run_workflow
+import asyncio
+from discord_notifier import TistoryDiscordBot
 
 load_dotenv()
 
@@ -22,9 +27,11 @@ class NewsBot:
         self.api_key = os.getenv('GOOGLE_API_KEY')
         self.csv_directory = r"C:\Users\slek9\PycharmProjects\news2blog\parsing_news"
         self.agent_result_directory = r"C:\Users\slek9\PycharmProjects\news2blog\Agent_result"
-        self.ai_workflow = create_workflow_test(self.api_key, self.csv_directory)
+        self.ai_workflow = create_workflow(self.api_key, self.csv_directory)
         self.news_directory = self.csv_directory
         self.current_result_directory = None
+        self.tistory_poster = TistoryPoster()
+        self.discord_bot = TistoryDiscordBot()
 
         if not os.path.exists(self.agent_result_directory):
             os.makedirs(self.agent_result_directory)
@@ -128,7 +135,6 @@ class NewsBot:
 
         print(f"Data saved to {full_path}")
 
-
     def get_related_links(self, title, content):
         latest_csv = self.get_latest_csv(self.csv_directory)
         related_links = []
@@ -143,7 +149,6 @@ class NewsBot:
         
         return related_links
 
-
     def get_latest_csv(self, directory):
         csv_files = [f for f in os.listdir(directory) if f.endswith('.csv')]
         if not csv_files:
@@ -156,47 +161,30 @@ class NewsBot:
         with open(file_path, 'r', encoding='utf-8') as f:
             return f.read()
 
-
     def create_new_result_directory(self):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         new_directory = os.path.join(self.agent_result_directory, timestamp)
         os.makedirs(new_directory, exist_ok=True)
         self.current_result_directory = new_directory
         print(f"Created new result directory: {new_directory}")
+        return new_directory
 
-
-    def run_cycle(self, time_period):
-        try:
-            self.create_new_result_directory()
-            self.setup_selenium()
-            raw_data = self.crawl_investing_com(time_period)
-            parsed_data = self.parse_news_data(raw_data)
-            self.save_to_csv(parsed_data)
-            
-            latest_csv = self.get_latest_csv(self.csv_directory)
-            input_data = self.read_csv_file(latest_csv)
-
-            result = run_workflow_test(self.ai_workflow, input_data, self.current_result_directory)
-            
-            print(f"Workflow result: {result}")
-            print(f"Result keys: {result.keys()}")
-
-            self.save_agent_results(result)
-            
-            blog_post = result.get('blog_content', '')  # 'blog_content' 키가 없으면 빈 문자열 반환
-            seo_score = result.get('SEO_score', 0)
-            
-            self.post_to_blog(blog_post)
-            self.save_result(blog_post, seo_score)
-            print(f"새 블로그 포스트가 작성되었습니다. SEO 점수: {seo_score}")
+    def get_result_files(self):
+        blog_title_path = os.path.join(self.current_result_directory, 'blog_title.txt')
+        blog_content_path = os.path.join(self.current_result_directory, 'blog_content.txt')
+        related_links_path = os.path.join(self.current_result_directory, 'related_links.txt')
+        tags_path = os.path.join(self.current_result_directory, 'tags.txt')
         
-        except Exception as e:
-            print(f"Error in run_cycle: {e}")
-            import traceback
-            traceback.print_exc()
-        finally:
-            if self.driver:
-                self.driver.quit()
+        return blog_title_path, blog_content_path, related_links_path, tags_path
+
+    async def post_to_blog(self, title, content, tags):
+        blog_url = self.tistory_poster.post_to_tistory(title, content, tags)
+        if blog_url:
+            print(f"블로그 포스트가 성공적으로 발행되었습니다. URL: {blog_url}")
+            await self.discord_bot.send_notification(blog_url)
+        else:
+            print("블로그 URL을 가져오는데 실패했습니다.")
+        return blog_url
 
     def save_agent_results(self, result):
         for agent, data in result.items():
@@ -215,10 +203,6 @@ class NewsBot:
                 
                 print(f"Saved {agent} result to {file_path}")
 
-    def post_to_blog(self, blog_post):
-        print("블로그에 포스팅:")
-        print(blog_post[:500] + "..." if len(blog_post) > 500 else blog_post)
-
     def save_result(self, blog_post, seo_score):
         file_name = "blog_post.txt"
         file_path = os.path.join(self.current_result_directory, file_name)
@@ -229,26 +213,77 @@ class NewsBot:
         
         print(f"Saved blog post to {file_path}")
 
-def main():
-    bot = NewsBot()
-    
-    def run_schedule():
-        while True:
-            now = datetime.now()
-            if now.hour == 14 and now.minute == 4:
-                bot.run_cycle("night_to_morning")
-            elif now.hour == 21 and now.minute == 17:
-                bot.run_cycle("morning_to_noon")
-            elif now.hour == 23 and now.minute == 31:
-                bot.run_cycle("noon_to_evening")
-            time.sleep(60)  # 1분마다 체크
+    async def run_cycle(self, time_period):
+        try:
+            result_directory = self.create_new_result_directory()
+            
+            self.setup_selenium()
+            
+            raw_data = self.crawl_investing_com(time_period)
+            
+            parsed_data = self.parse_news_data(raw_data)
+            
+            self.save_to_csv(parsed_data)
+            
+            latest_csv = self.get_latest_csv(self.csv_directory)
+            
+            input_data = self.read_csv_file(latest_csv)
 
-    try:
-        run_schedule()
-    except Exception as e:
-        print(f"An error occurred: {e}")
-        import traceback
-        traceback.print_exc()
+            result = run_workflow(self.ai_workflow, input_data, self.current_result_directory)
+            
+            print(f"Workflow result: {result}")
+            print(f"Result keys: {result.keys()}")
+
+            self.save_agent_results(result)
+            
+            blog_title_path, blog_content_path, related_links_path, tags_path = self.get_result_files()
+
+            with open(blog_title_path, 'r', encoding='utf-8') as f:
+                blog_title = f.read().strip().replace('#', '').replace('*', '')
+
+            with open(blog_content_path, 'r', encoding='utf-8') as f:
+                blog_content = f.read()
+
+            with open(related_links_path, 'r', encoding='utf-8') as f:
+                links = f.readlines()
+                related_links = "**관련출처:**\n" + ''.join([f"- {link.strip()}\n" for link in links])
+
+            with open(tags_path, 'r', encoding='utf-8') as f:
+                tags = f.read().replace('**태그:**', '').replace('#', '').replace('*', '').replace(' ', '').strip()
+
+            full_content = blog_content + "\n\n" + related_links
+
+            blog_url = await self.post_to_blog(blog_title, full_content, tags)
+            
+            seo_score = result.get('SEO_score', 0)
+            
+            self.save_result(full_content, seo_score)
+            
+            print(f"새 블로그 포스트가 작성되었습니다. SEO 점수: {seo_score}")
+            if blog_url:
+                print(f"블로그 URL: {blog_url}")
+            else:
+                print("블로그 URL을 가져오는데 실패했습니다.")
+        
+        except Exception as e:
+            print(f"Error in run_cycle: {e}")
+            import traceback
+            traceback.print_exc()
+        finally:
+            if self.tistory_poster.driver:
+                self.tistory_poster.driver.quit()
+
+async def main():
+    news_bot = NewsBot()
+    
+    # Discord 봇 시작
+    discord_bot_task = asyncio.create_task(news_bot.discord_bot.start())
+    
+    # 뉴스봇 실행
+    await news_bot.run_cycle("night_to_morning")
+    
+    # Discord 봇 종료
+    await news_bot.discord_bot.close()
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

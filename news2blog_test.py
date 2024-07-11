@@ -213,7 +213,7 @@ class NewsBot:
 
             # 블로그 제목 읽기
             with open(blog_title_path, 'r', encoding='utf-8') as f:
-                blog_title = f.read().strip().replace('#', '')
+                blog_title = f.read().strip().replace('#', '').replace('*', '')
 
             # 블로그 내용 읽기
             with open(blog_content_path, 'r', encoding='utf-8') as f:
@@ -226,7 +226,7 @@ class NewsBot:
 
             # 태그 읽기
             with open(tags_path, 'r', encoding='utf-8') as f:
-                tags = f.read().replace('**태그:**', '').replace('#', '').replace(' ', '').strip()
+                tags = f.read().replace('**태그:**', '').replace('#', '').replace('*', '').replace(' ', '').strip()
 
             # 전체 내용 조합
             full_content = blog_content + "\n\n" + related_links
@@ -271,9 +271,7 @@ class NewsBot:
                 
                 print(f"Saved {agent} result to {file_path}")
 
-    def post_to_blog(self, blog_post):
-        print("블로그에 포스팅:")
-        print(blog_post[:500] + "..." if len(blog_post) > 500 else blog_post)
+
 
     def save_result(self, blog_post, seo_score):
         file_name = "blog_post.txt"
@@ -293,7 +291,7 @@ def main():
             now = datetime.now()
             if now.hour == 14 and now.minute == 4:
                 bot.run_cycle("night_to_morning")
-            elif now.hour == 22 and now.minute == 50:
+            elif now.hour == 23 and now.minute == 27:
                 bot.run_cycle("morning_to_noon")
             time.sleep(60)  # 1분마다 체크
 
