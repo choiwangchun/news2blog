@@ -1,5 +1,3 @@
-# news2blog.py
-
 import schedule
 import time
 import csv
@@ -17,9 +15,32 @@ from selenium.webdriver.common.action_chains import ActionChains
 from auto_posting import TistoryPoster
 from ai_workflow import create_workflow, run_workflow
 import asyncio
-from discord_notifier import TistoryDiscordBot
+import discord
+from discord.ext import commands
 
 load_dotenv()
+
+
+class TistoryDiscordBot:
+    def __init__(self):
+        self.token = os.getenv('DISCORD_BOT_TOKEN')
+        self.channel_id = int(os.getenv('DISCORD_CHANNEL_ID'))
+        self.bot = commands.Bot(command_prefix='!', intents=discord.Intents.default())
+
+    async def start(self):
+        await self.bot.start(self.token)
+
+    async def close(self):
+        await self.bot.close()
+
+    async def send_notification(self, blog_url):
+        channel = self.bot.get_channel(self.channel_id)
+        if channel:
+            await channel.send(f"새로운 블로그 포스트가 발행되었습니다: {blog_url}")
+        else:
+            print(f"채널 ID {self.channel_id}를 찾을 수 없습니다.")
+
+
 
 class NewsBot:
     def __init__(self):
@@ -277,13 +298,13 @@ async def main():
     news_bot = NewsBot()
     
     # Discord 봇 시작
-    discord_bot_task = asyncio.create_task(news_bot.discord_bot.start())
+    discord_bot_task = asyncio.create_task(news_bot.discord_bot.bot.start(news_bot.discord_bot.token))
     
     # 뉴스봇 실행
     await news_bot.run_cycle("night_to_morning")
     
     # Discord 봇 종료
-    await news_bot.discord_bot.close()
+    await news_bot.discord_bot.bot.close()
 
 if __name__ == "__main__":
     asyncio.run(main())
