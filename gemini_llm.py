@@ -1,6 +1,7 @@
 import discord
 from discord.ext import commands
 import os
+import pandas as pd
 from dotenv import load_dotenv
 from auto_posting import TistoryPoster
 import asyncio
