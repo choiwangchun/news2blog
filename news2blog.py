@@ -297,12 +297,13 @@ class NewsBot:
 async def main():
     news_bot = NewsBot()
     
+
     # Discord 봇 시작
     discord_bot_task = asyncio.create_task(news_bot.discord_bot.bot.start(news_bot.discord_bot.token))
-    
+
     # 뉴스봇 실행
     await news_bot.run_cycle("night_to_morning")
-    
+
     # Discord 봇 종료
     await news_bot.discord_bot.bot.close()
 
