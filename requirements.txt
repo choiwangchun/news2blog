@@ -12,3 +12,6 @@ discord.py
 langchain-google-genai
 PyNaCl
 ipython
+PyQt6
+sentence-transformers
+faiss-cpu
